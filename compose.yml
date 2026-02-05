@@ -1,0 +1,12 @@
+services:
+  sn-gamestate:
+    build:
+      context: .
+    image: sn-gamestate:local
+    working_dir: /app
+    volumes:
+      - ./data:/data
+      - ./outputs:/app/outputs
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: ["-cn", "soccernet", "data_dir=/data", "num_cores=0", "modules/jersey_number_detect=easyocr"]
