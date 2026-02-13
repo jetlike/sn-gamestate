@@ -1,0 +1,10 @@
+_target_: sn_gamestate.detection.yolo_multiclass_api.YOLOMulticlass
+batch_size: 16
+cfg:
+  # yolov8x for best accuracy on GPU server; switch to yolov8n.pt for speed.
+  path_to_checkpoint: yolov8x.pt
+  min_confidence: 0.30
+  class_map:
+    person: player
+    sports ball: ball
+    goalkeeper: goalkeeper
