@@ -41,6 +41,8 @@ class YOLOMulticlass(ImageLevelModule):
         self.model.to(device)
         self.min_confidence = float(cfg.min_confidence)
         self.class_map = dict(cfg.class_map)
+        self.min_confidence_by_role = dict(getattr(cfg, "min_confidence_by_role", {}))
+        self.max_detections_by_role = dict(getattr(cfg, "max_detections_by_role", {}))
         self._next_id = 0
 
     @torch.no_grad()
@@ -58,6 +60,7 @@ class YOLOMulticlass(ImageLevelModule):
 
         for results, shape, (_, metadata) in zip(results_by_image, shapes, metadatas.iterrows()):
             class_names = results.names if isinstance(results.names, dict) else {}
+            per_role_candidates = {}
             for bbox in results.boxes.cpu().numpy():
                 conf = float(bbox.conf[0])
                 if conf < self.min_confidence:
@@ -69,6 +72,10 @@ class YOLOMulticlass(ImageLevelModule):
                 if role is None:
                     continue
 
+                role_min_conf = float(self.min_confidence_by_role.get(role, self.min_confidence))
+                if conf < role_min_conf:
+                    continue
+
                 # Keep distinct numeric ids by semantic role to avoid collisions with dataset ids.
                 if role == "ball":
                     category_id = 4
@@ -77,20 +84,23 @@ class YOLOMulticlass(ImageLevelModule):
                 else:
                     category_id = 1
 
-                emitted.append(
-                    pd.Series(
-                        dict(
-                            image_id=metadata.name,
-                            video_id=metadata.video_id,
-                            category_id=category_id,
-                            category_name=cls_name,
-                            role=role,
-                            bbox_ltwh=ltrb_to_ltwh(bbox.xyxy[0], shape),
-                            bbox_conf=conf,
-                        ),
-                        name=self._next_id,
-                    )
+                row = dict(
+                    image_id=metadata.name,
+                    video_id=metadata.video_id,
+                    category_id=category_id,
+                    category_name=cls_name,
+                    role=role,
+                    bbox_ltwh=ltrb_to_ltwh(bbox.xyxy[0], shape),
+                    bbox_conf=conf,
                 )
-                self._next_id += 1
+                per_role_candidates.setdefault(role, []).append(row)
+
+            for role, role_candidates in per_role_candidates.items():
+                role_candidates.sort(key=lambda r: r["bbox_conf"], reverse=True)
+                k = int(self.max_detections_by_role.get(role, len(role_candidates)))
+                role_candidates = role_candidates[:k]
+                for row in role_candidates:
+                    emitted.append(pd.Series(row, name=self._next_id))
+                    self._next_id += 1
 
         return emitted

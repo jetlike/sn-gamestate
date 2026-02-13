@@ -4,6 +4,13 @@ cfg:
   # yolov8x for best accuracy on GPU server; switch to yolov8n.pt for speed.
   path_to_checkpoint: yolov8x.pt
   min_confidence: 0.30
+  min_confidence_by_role:
+    player: 0.40
+    ball: 0.70
+  max_detections_by_role:
+    player: 45
+    ball: 6
+    goalkeeper: 4
   class_map:
     person: player
     sports ball: ball

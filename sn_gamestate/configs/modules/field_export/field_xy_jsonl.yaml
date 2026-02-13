@@ -3,3 +3,12 @@ output_path: field_xy/positions.jsonl
 fps: 25.0
 infer_goalkeeper_candidates: True
 include_image_bbox: False
+min_player_conf: 0.40
+min_ball_conf: 0.70
+emit_single_ball: True
+ball_track_max_step_m: 12.0
+pitch_x_min: -52.5
+pitch_x_max: 52.5
+pitch_y_min: -34.0
+pitch_y_max: 34.0
+field_margin_m: 5.0

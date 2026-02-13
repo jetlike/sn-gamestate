@@ -4,6 +4,13 @@ cfg:
   # Use any YOLO checkpoint with person and sports ball classes.
   path_to_checkpoint: yolov8n.pt
   min_confidence: 0.25
+  min_confidence_by_role:
+    player: 0.35
+    ball: 0.65
+  max_detections_by_role:
+    player: 40
+    ball: 8
+    goalkeeper: 4
   class_map:
     person: player
     sports ball: ball

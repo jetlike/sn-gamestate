@@ -30,6 +30,15 @@ class FieldXYJsonlExporter(VideoLevelModule):
         fps: float = 25.0,
         infer_goalkeeper_candidates: bool = True,
         include_image_bbox: bool = True,
+        min_player_conf: float = 0.4,
+        min_ball_conf: float = 0.6,
+        emit_single_ball: bool = True,
+        ball_track_max_step_m: float = 12.0,
+        pitch_x_min: float = -52.5,
+        pitch_x_max: float = 52.5,
+        pitch_y_min: float = -34.0,
+        pitch_y_max: float = 34.0,
+        field_margin_m: float = 5.0,
         **kwargs,
     ):
         super().__init__()
@@ -37,12 +46,22 @@ class FieldXYJsonlExporter(VideoLevelModule):
         self.fps = fps
         self.infer_goalkeeper_candidates = infer_goalkeeper_candidates
         self.include_image_bbox = include_image_bbox
+        self.min_player_conf = min_player_conf
+        self.min_ball_conf = min_ball_conf
+        self.emit_single_ball = emit_single_ball
+        self.ball_track_max_step_m = ball_track_max_step_m
+        self.pitch_x_min = pitch_x_min
+        self.pitch_x_max = pitch_x_max
+        self.pitch_y_min = pitch_y_min
+        self.pitch_y_max = pitch_y_max
+        self.field_margin_m = field_margin_m
 
     def process(self, detections: pd.DataFrame, metadatas: pd.DataFrame):
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
         image_rows = metadatas.sort_values(by="frame")
         grouped = detections.groupby("image_id") if len(detections) else {}
+        prev_ball_xy = None
 
         with self.output_path.open("w", encoding="utf-8") as f:
             for image_id, img_meta in image_rows.iterrows():
@@ -68,16 +87,24 @@ class FieldXYJsonlExporter(VideoLevelModule):
                     if not isinstance(role, str) or not role:
                         role = "player"
 
+                    conf = float(row.get("bbox_conf", 0.0))
+                    if role == "ball" and conf < self.min_ball_conf:
+                        continue
+                    if role in {"player", "goalkeeper"} and conf < self.min_player_conf:
+                        continue
+
+                    x = float(x)
+                    y = float(y)
+                    if not self._in_pitch_bounds(x, y):
+                        continue
+
                     obj = {
                         "detection_id": int(det_id),
                         "type": role,
-                        "field_xy": [float(x), float(y)],
-                        "confidence": float(row.get("bbox_conf", 0.0)),
+                        "field_xy": [x, y],
+                        "confidence": conf,
                         "category_name": str(row.get("category_name", "")),
                     }
-
-                    if role == "ball" and ball_xy is None:
-                        ball_xy = [float(x), float(y)]
 
                     if self.include_image_bbox:
                         ltwh = row.get("bbox_ltwh")
@@ -85,6 +112,9 @@ class FieldXYJsonlExporter(VideoLevelModule):
                             obj["bbox_ltwh"] = [float(v) for v in ltwh]
 
                     frame_objects.append(obj)
+
+                frame_objects, prev_ball_xy = self._select_ball(frame_objects, prev_ball_xy)
+                ball_xy = next((o["field_xy"] for o in frame_objects if o["type"] == "ball"), None)
 
                 if self.infer_goalkeeper_candidates:
                     self._mark_goalkeeper_candidates(frame_objects)
@@ -105,6 +135,41 @@ class FieldXYJsonlExporter(VideoLevelModule):
 
         log.info("Wrote %d frames to %s", len(image_rows), self.output_path)
         return detections
+
+    def _in_pitch_bounds(self, x: float, y: float) -> bool:
+        return (
+            self.pitch_x_min - self.field_margin_m <= x <= self.pitch_x_max + self.field_margin_m
+            and self.pitch_y_min - self.field_margin_m <= y <= self.pitch_y_max + self.field_margin_m
+        )
+
+    def _select_ball(self, frame_objects, prev_ball_xy):
+        balls = [o for o in frame_objects if o["type"] == "ball"]
+        others = [o for o in frame_objects if o["type"] != "ball"]
+        if not balls:
+            return frame_objects, prev_ball_xy
+        if not self.emit_single_ball:
+            best = max(balls, key=lambda o: o["confidence"])
+            return others + balls, best["field_xy"]
+
+        if prev_ball_xy is None:
+            chosen = max(balls, key=lambda o: o["confidence"])
+            return others + [chosen], chosen["field_xy"]
+
+        def score(ball_obj):
+            bx, by = ball_obj["field_xy"]
+            dx = bx - prev_ball_xy[0]
+            dy = by - prev_ball_xy[1]
+            d = (dx * dx + dy * dy) ** 0.5
+            if d > self.ball_track_max_step_m:
+                return ball_obj["confidence"] - 2.0
+            return ball_obj["confidence"] - 0.03 * d
+
+        chosen = max(balls, key=score)
+        bx, by = chosen["field_xy"]
+        d = ((bx - prev_ball_xy[0]) ** 2 + (by - prev_ball_xy[1]) ** 2) ** 0.5
+        if d > self.ball_track_max_step_m and chosen["confidence"] < 0.85:
+            return others, prev_ball_xy
+        return others + [chosen], chosen["field_xy"]
 
     @staticmethod
     def _mark_goalkeeper_candidates(frame_objects):
