@@ -1,0 +1,61 @@
+# Minimal SoccerNet field-XY extraction config.
+defaults:
+  - dataset: soccernet_gs
+  - eval: gs_hota
+  - engine: offline_novis
+  - modules/bbox_detector: yolo_players_ball
+  - modules/pitch: nbjw_calib
+  - modules/calibration: nbjw_calib
+  - modules/field_export: field_xy_jsonl
+  - _self_
+
+pipeline:
+  - bbox_detector
+  - pitch
+  - calibration
+  - field_export
+
+experiment_name: "sn-fieldxy"
+
+home_dir: "${oc.env:HOME}"
+data_dir: "${project_dir}/data"
+model_dir: "${project_dir}/pretrained_models"
+
+num_cores: 0
+use_wandb: False
+use_rich: True
+
+# Disable visualization (no video rendering).
+visualization: null
+
+modules:
+  bbox_detector: {batch_size: 1}
+  pitch: {batch_size: 1}
+  calibration: {batch_size: 1}
+
+# Keep state dumping disabled by default for faster runs and less disk usage.
+state:
+  save_file: null
+  load_file: null
+
+# Disable expensive benchmark/eval hooks; this profile is for extraction.
+test_tracking: True
+eval_tracking: False
+print_config: False
+
+dataset:
+  nvid: 1
+  eval_set: "train"
+  dataset_path: ${data_dir}/SoccerNetGS
+  vids_dict:
+    train: []
+
+project_dir: "${hydra:runtime.cwd}"
+hydra:
+  output_subdir: "configs"
+  job:
+    chdir: True
+  run:
+    dir: "outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}"
+  sweep:
+    dir: "multirun_outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}"

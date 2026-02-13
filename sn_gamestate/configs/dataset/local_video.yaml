@@ -1,0 +1,8 @@
+defaults:
+  - default
+
+_target_: tracklab.wrappers.ExternalVideo
+
+# Override via CLI: dataset.video_path=/path/to/video.mp4
+# or dataset.video_path=/path/to/folder_of_videos/
+video_path: ???

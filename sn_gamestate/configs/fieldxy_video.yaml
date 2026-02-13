@@ -1,0 +1,53 @@
+# Field-XY extraction from an external video file (not SoccerNet dataset).
+# Usage:
+#   uv run tracklab -cn fieldxy_video dataset.video_path=/path/to/match.mp4
+#   uv run tracklab -cn fieldxy_video dataset.video_path=/path/to/video_dir/
+defaults:
+  - dataset: local_video
+  - eval: gs_hota
+  - engine: offline_novis
+  - modules/bbox_detector: yolo_players_ball
+  - modules/pitch: nbjw_calib
+  - modules/calibration: nbjw_calib
+  - modules/field_export: field_xy_jsonl
+  - _self_
+
+pipeline:
+  - bbox_detector
+  - pitch
+  - calibration
+  - field_export
+
+experiment_name: "fieldxy-video"
+
+home_dir: "${oc.env:HOME}"
+data_dir: "${project_dir}/data"
+model_dir: "${project_dir}/pretrained_models"
+
+num_cores: 0
+use_wandb: False
+use_rich: True
+visualization: null
+
+modules:
+  bbox_detector: {batch_size: 1}
+  pitch: {batch_size: 1}
+  calibration: {batch_size: 1}
+
+state:
+  save_file: null
+  load_file: null
+
+test_tracking: True
+eval_tracking: False
+print_config: False
+
+project_dir: "${hydra:runtime.cwd}"
+hydra:
+  output_subdir: "configs"
+  job:
+    chdir: True
+  run:
+    dir: "outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}"
+  sweep:
+    dir: "multirun_outputs/${experiment_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}"

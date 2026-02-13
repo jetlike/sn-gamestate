@@ -1,0 +1,5 @@
+_target_: sn_gamestate.export.field_xy_jsonl.FieldXYJsonlExporter
+output_path: field_xy/positions.jsonl
+fps: 25.0
+infer_goalkeeper_candidates: True
+include_image_bbox: False

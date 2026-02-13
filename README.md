@@ -335,6 +335,89 @@ echo "/absolute/path/to/tracklab" > .venv/lib/python3.9/site-packages/tracklab_d
 If you encounter issues after upgrading to the latest version, do not forget to run `uv run -U tracklab -cn soccernet` and `uv pip install -e .` to keep your environment up to date.
 Feel free to open a GitHub issue or contact us on Discord if you need further assistance.
 
+## Minimal Field-XY Extraction Profile
+If you only need structured field coordinates (`player`/`ball` with optional goalkeeper candidate tags),
+you can use the lightweight profile below instead of the full GSR baseline.
+
+What it keeps:
+- bbox detector
+- pitch keypoint extraction
+- calibration + bbox-to-pitch projection
+- JSONL field-coordinate exporter
+
+What it removes:
+- reid
+- tracking
+- jersey OCR
+- team/team-side modules
+- evaluation
+
+Run:
+```bash
+uv run tracklab -cn soccernet_fieldxy
+```
+
+Output:
+- JSONL file per run at `field_xy/positions.jsonl` (inside the Hydra run directory, e.g. `outputs/sn-fieldxy/.../field_xy/positions.jsonl`)
+
+Useful overrides:
+```bash
+# Process one split
+uv run tracklab -cn soccernet_fieldxy dataset.eval_set=train
+
+# Process all videos in split
+uv run tracklab -cn soccernet_fieldxy dataset.nvid=-1
+
+# Change JSON output path
+uv run tracklab -cn soccernet_fieldxy modules.field_export.output_path=field_xy/my_positions.jsonl
+```
+
+### Server Profile (CUDA GPU)
+For fast inference on a Linux server with GPU:
+```bash
+uv run tracklab -cn soccernet_fieldxy_server
+```
+This uses `yolov8x` with larger batch sizes (16/8/8). Override the detector:
+```bash
+# Use lighter model for lower latency
+uv run tracklab -cn soccernet_fieldxy_server modules/bbox_detector=yolo_players_ball
+```
+
+### External Video (Non-SoccerNet)
+Process any `.mp4` video file or folder of videos:
+```bash
+# Single video
+uv run tracklab -cn fieldxy_video dataset.video_path=/path/to/match.mp4
+
+# Folder of videos
+uv run tracklab -cn fieldxy_video dataset.video_path=/path/to/video_dir/
+```
+
+### JSONL Output Schema
+Each line is a JSON object:
+```json
+{
+  "image_id": 0,
+  "video_id": 0,
+  "frame": 42,
+  "timestamp_sec": 1.68,
+  "n_players": 14,
+  "n_balls": 1,
+  "ball_xy": [12.3, -5.1],
+  "objects": [
+    {
+      "detection_id": 0,
+      "type": "player",
+      "field_xy": [-30.2, 15.8],
+      "confidence": 0.92,
+      "goalkeeper_candidate": true,
+      "goalkeeper_side": "left"
+    }
+  ]
+}
+```
+Field coordinates use the pitch center as origin (meters). Standard pitch: 105 x 68 m.
+
 ### FAQ
 We will try to gather interesting questions and answer them in the [FAQ](FAQ.md).
 
