@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -34,6 +35,9 @@ class FieldXYJsonlExporter(VideoLevelModule):
         min_ball_conf: float = 0.6,
         emit_single_ball: bool = True,
         ball_track_max_step_m: float = 12.0,
+        ball_persist_frames: int = 0,
+        ball_max_speed_mps: float = 40.0,
+        ball_inferred_conf: float = 0.05,
         pitch_x_min: float = -52.5,
         pitch_x_max: float = 52.5,
         pitch_y_min: float = -34.0,
@@ -50,6 +54,9 @@ class FieldXYJsonlExporter(VideoLevelModule):
         self.min_ball_conf = min_ball_conf
         self.emit_single_ball = emit_single_ball
         self.ball_track_max_step_m = ball_track_max_step_m
+        self.ball_persist_frames = max(0, int(ball_persist_frames))
+        self.ball_max_speed_mps = float(ball_max_speed_mps)
+        self.ball_inferred_conf = float(ball_inferred_conf)
         self.pitch_x_min = pitch_x_min
         self.pitch_x_max = pitch_x_max
         self.pitch_y_min = pitch_y_min
@@ -62,6 +69,9 @@ class FieldXYJsonlExporter(VideoLevelModule):
         image_rows = metadatas.sort_values(by="frame")
         grouped = detections.groupby("image_id") if len(detections) else {}
         prev_ball_xy = None
+        prev_ball_velocity = [0.0, 0.0]
+        prev_ball_frame = None
+        missed_ball_frames = 0
 
         with self.output_path.open("w", encoding="utf-8") as f:
             for image_id, img_meta in image_rows.iterrows():
@@ -113,13 +123,48 @@ class FieldXYJsonlExporter(VideoLevelModule):
 
                     frame_objects.append(obj)
 
-                frame_objects, prev_ball_xy = self._select_ball(frame_objects, prev_ball_xy)
+                frame_objects, selected_ball_xy = self._select_ball(frame_objects, prev_ball_xy)
+                frame_idx = int(img_meta.get("frame", -1))
+                if selected_ball_xy is not None:
+                    if prev_ball_xy is not None and prev_ball_frame is not None and frame_idx >= 0:
+                        dt_frames = max(1, frame_idx - prev_ball_frame)
+                        prev_ball_velocity = [
+                            (selected_ball_xy[0] - prev_ball_xy[0]) / dt_frames,
+                            (selected_ball_xy[1] - prev_ball_xy[1]) / dt_frames,
+                        ]
+                    prev_ball_xy = selected_ball_xy
+                    prev_ball_frame = frame_idx if frame_idx >= 0 else prev_ball_frame
+                    missed_ball_frames = 0
+                else:
+                    inferred_xy = self._infer_ball_xy(
+                        prev_ball_xy=prev_ball_xy,
+                        prev_ball_velocity=prev_ball_velocity,
+                        prev_ball_frame=prev_ball_frame,
+                        frame_idx=frame_idx,
+                        missed_ball_frames=missed_ball_frames,
+                    )
+                    if inferred_xy is not None:
+                        frame_objects.append(
+                            {
+                                "detection_id": -1,
+                                "type": "ball",
+                                "field_xy": inferred_xy,
+                                "confidence": self.ball_inferred_conf,
+                                "category_name": "inferred_ball",
+                                "inferred": True,
+                            }
+                        )
+                        prev_ball_xy = inferred_xy
+                        prev_ball_frame = frame_idx if frame_idx >= 0 else prev_ball_frame
+                        missed_ball_frames += 1
+                    else:
+                        missed_ball_frames += 1
+
                 ball_xy = next((o["field_xy"] for o in frame_objects if o["type"] == "ball"), None)
 
                 if self.infer_goalkeeper_candidates:
                     self._mark_goalkeeper_candidates(frame_objects)
 
-                frame_idx = int(img_meta.get("frame", -1))
                 payload = {
                     "image_id": int(image_id),
                     "video_id": int(img_meta.get("video_id", -1)),
@@ -136,6 +181,38 @@ class FieldXYJsonlExporter(VideoLevelModule):
         log.info("Wrote %d frames to %s", len(image_rows), self.output_path)
         return detections
 
+    def _infer_ball_xy(
+        self,
+        prev_ball_xy,
+        prev_ball_velocity,
+        prev_ball_frame,
+        frame_idx: int,
+        missed_ball_frames: int,
+    ):
+        if self.ball_persist_frames <= 0:
+            return None
+        if prev_ball_xy is None or prev_ball_frame is None or frame_idx < 0:
+            return None
+        if missed_ball_frames >= self.ball_persist_frames:
+            return None
+
+        dt_frames = max(1, frame_idx - prev_ball_frame)
+        max_step = self.ball_max_speed_mps * (dt_frames / self.fps)
+        vx, vy = prev_ball_velocity
+        speed_per_frame = math.hypot(vx, vy)
+        if speed_per_frame > 0:
+            allowed_per_frame = self.ball_max_speed_mps / self.fps
+            scale = min(1.0, allowed_per_frame / speed_per_frame)
+            vx *= scale
+            vy *= scale
+
+        inferred = [prev_ball_xy[0] + vx * dt_frames, prev_ball_xy[1] + vy * dt_frames]
+        if math.hypot(inferred[0] - prev_ball_xy[0], inferred[1] - prev_ball_xy[1]) > max_step:
+            return None
+        if not self._in_pitch_bounds(inferred[0], inferred[1]):
+            return None
+        return inferred
+
     def _in_pitch_bounds(self, x: float, y: float) -> bool:
         return (
             self.pitch_x_min - self.field_margin_m <= x <= self.pitch_x_max + self.field_margin_m
@@ -146,7 +223,7 @@ class FieldXYJsonlExporter(VideoLevelModule):
         balls = [o for o in frame_objects if o["type"] == "ball"]
         others = [o for o in frame_objects if o["type"] != "ball"]
         if not balls:
-            return frame_objects, prev_ball_xy
+            return frame_objects, None
         if not self.emit_single_ball:
             best = max(balls, key=lambda o: o["confidence"])
             return others + balls, best["field_xy"]
